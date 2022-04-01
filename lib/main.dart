@@ -1,39 +1,17 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_fcm_notifications_exp/model/push_notificaton_model.dart';
+import 'package:firebase_fcm_notifications_exp/widgets/notification_badge.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:overlay_support/overlay_support.dart';
 
-const AndroidNotificationChannel channel = AndroidNotificationChannel(
-  'high_importance_channel',
-  'High Importance Notification',
-  description: 'This channel is used for important notifications',
-  importance: Importance.high,
-  playSound: true,
-);
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
 
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
-  print('A background message just showed up : ${message.messageId}');
-}
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-  await flutterLocalNotificationsPlugin
-      .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>()
-      ?.createNotificationChannel(channel);
 
-  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
-    alert: true,
-    badge: true,
-    sound: true,
-  );
+main()  {
+
   runApp(const MyApp());
 }
 
@@ -43,129 +21,153 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
+    return OverlaySupport(
+      child: MaterialApp(
+        title: 'Flutter Demo',
+        theme: ThemeData(
+          primarySwatch: Colors.blue,
+        ),
+        home: const HomePage(),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({Key? key, required this.title}) : super(key: key);
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class HomePage extends StatefulWidget {
+  const HomePage({Key? key}) : super(key: key);
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  _HomePageState createState() => _HomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _HomePageState extends State<HomePage> {
+  //Initiliaze some values
+  late final FirebaseMessaging _messaging;
+  int _totalNotificationCounter = 0;
+  //model
+  PushNotification? _notificationInfo;
+  //Register Notification
+  void registerNotification() async {
+    await Firebase.initializeApp();
+    //instance for firebase messaging
+    _messaging = FirebaseMessaging.instance;
+
+    //Permissions for notification
+    //three types of states in Notification
+    //not determined(null), granted(true). decline(false)
+
+    NotificationSettings settings = await _messaging.requestPermission(
+      alert: true,
+      badge: true,
+      provisional: false,
+      sound: true,
+    );
+
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      print('user granted the permission');
+
+      //main message
+      //listening to server notification
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        PushNotification notification = PushNotification(
+          title: message.notification!.title,
+          body: message.notification!.body,
+          dataTitle: message.data['title'],
+          dataBody: message.data['body'],
+        );
+
+        setState(() {
+          _totalNotificationCounter++;
+          _notificationInfo = notification;
+        });
+
+        if(_notificationInfo != null) {
+          showSimpleNotification(
+            Text(_notificationInfo!.title!),
+            leading: NotificationBadge(totalNotification: _totalNotificationCounter),
+            subtitle: Text(_notificationInfo!.body!),
+            background: Colors.blue,
+            duration: const Duration(seconds: 2),
+          );
+        }
+      });
+    }
+    else{
+      print('user declined the permission');
+    }
+  }
+
+  void onBackgroundNotification() {
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      PushNotification notification = PushNotification(
+        title: message.notification!.title,
+        body: message.notification!.body,
+        dataTitle: message.data['title'],
+        dataBody: message.data['body'],
+      );
+
+      setState(() {
+        _totalNotificationCounter++;
+        _notificationInfo = notification;
+      });
+    });
+  }
+
+  void onTerminateStateNotification() async {
+    await Firebase.initializeApp();
+    RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+    if(initialMessage != null) {
+      PushNotification notification = PushNotification(
+        title: initialMessage.notification!.title,
+        body: initialMessage.notification!.body,
+        dataTitle: initialMessage.data['title'],
+        dataBody: initialMessage.data['body'],
+      );
+
+      setState(() {
+        _totalNotificationCounter++;
+        _notificationInfo = notification;
+      });
+    }
+  }
 
   @override
   void initState() {
+    registerNotification();
+    onBackgroundNotification();
+    onTerminateStateNotification();
     super.initState();
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      RemoteNotification? notification = message.notification;
-      AndroidNotification? android = message.notification?.android;
-      if (notification != null && android != null) {
-        flutterLocalNotificationsPlugin.show(
-          notification.hashCode,
-          notification.title,
-          notification.body,
-          NotificationDetails(
-              android: AndroidNotificationDetails(
-            channel.id,
-            channel.name,
-            channelDescription: channel.description,
-            color: Colors.blue,
-            playSound: true,
-            icon: '@mipmap/ic_launcher',
-          )),
-        );
-      }
-    });
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      print('A new onMessageOpenedApp event was published!');
-      RemoteNotification? notification = message.notification;
-      AndroidNotification? android = message.notification?.android;
-      if (notification != null && android != null) {
-        showDialog(
-            context: context,
-            builder: (_) {
-              return AlertDialog(
-                title: Text(notification.title!),
-                content: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(notification.body!),
-                    ],
-                  ),
-                ),
-              );
-            });
-      }
-    });
   }
-
-  void sendNotification() {
-    setState(() {
-      _counter++;
-    });
-    flutterLocalNotificationsPlugin.show(
-      0,
-      'Testing $_counter',
-      'Local Notification',
-      NotificationDetails(
-          android: AndroidNotificationDetails(
-        channel.id,
-        channel.name,
-        channelDescription: channel.description,
-        color: Colors.blue,
-        playSound: true,
-        icon: '@mipmap/ic_launcher',
-      )),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-      title: Text(widget.title),
-      ),
-      body: Center(
-       child: Column(
-         mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
-          ],
+      appBar: AppBar(title: const Text('Push Notification'),),
+      body: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children:  [
+              const Text("Flutter PushNotification",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.black,
+                fontSize: 20,
+              ),),
+              NotificationBadge(totalNotification: _totalNotificationCounter),
+              _notificationInfo != null
+              ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('Title: ${_notificationInfo!.dataTitle ?? _notificationInfo!.title}'),
+                  Text('Body: ${_notificationInfo!.dataBody ?? _notificationInfo!.body}'),
+                ],
+              )
+                  : Container(),
+            ],
+          ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: sendNotification,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
+
